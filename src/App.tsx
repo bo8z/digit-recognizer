@@ -6,18 +6,22 @@ export default function App() {
   const [nn, setNN] = useState<NeuralNetwork | null>(null);
   const [result, setResult] = useState<ForwardResult | null>(null);
   const [networkData, setNetworkData] = useState<NetworkData | null>(null);
+  const [mode, setMode] = useState<"2layer" | "1layer">("2layer");
+  const [liveInference, setLiveInference] = useState(true);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const isDrawing = useRef(false);
 
   useEffect(() => {
-    fetch("/weights.json")
+    const file = mode === "2layer" ? "/weights.json" : "/weights-1layer.json";
+    fetch(file)
       .then((r) => r.json())
       .then((data: NetworkData) => {
         setNN(new NeuralNetwork(data));
         setNetworkData(data);
+        setResult(null);
       })
-      .catch(() => console.error("No weights.json found. Run: node train.mjs"));
-  }, []);
+      .catch(() => console.error(`No ${file} found.`));
+  }, [mode]);
 
   const getPixels = useCallback(() => {
     const canvas = canvasRef.current;
@@ -119,6 +123,13 @@ export default function App() {
     setResult(nn.forward(pixels));
   }, [nn, getPixels]);
 
+  const toggleLiveInference = useCallback(() => {
+    setLiveInference((prev) => {
+      if (!prev) runInference();
+      return !prev;
+    });
+  }, [runInference]);
+
   const handlePointerDown = (e: React.PointerEvent) => {
     isDrawing.current = true;
     const canvas = canvasRef.current!;
@@ -140,12 +151,12 @@ export default function App() {
     ctx.lineJoin = "round";
     ctx.lineTo(e.clientX - rect.left, e.clientY - rect.top);
     ctx.stroke();
-    runInference();
+    if (liveInference) runInference();
   };
 
   const handlePointerUp = () => {
     isDrawing.current = false;
-    runInference();
+    if (liveInference) runInference();
   };
 
   const clearCanvas = () => {
@@ -176,9 +187,41 @@ export default function App() {
       <h1 style={{ fontSize: "28px", fontWeight: 500, margin: "0 0 8px" }}>
         Neural Network Digit Recognizer
       </h1>
-      <p style={{ color: "#8b949e", margin: "0 0 32px", fontSize: "14px" }}>
-        784 → 16 → 16 → 10 &nbsp;|&nbsp; Trained on MNIST from scratch
+      <p style={{ color: "#8b949e", margin: "0 0 16px", fontSize: "14px" }}>
+        {mode === "2layer" ? "784 → 16 → 16 → 10" : "784 → 10"} &nbsp;|&nbsp; Trained on MNIST from scratch
       </p>
+      <div style={{ display: "flex", gap: "8px", marginBottom: "32px" }}>
+        <button
+          onClick={() => setMode("2layer")}
+          style={{
+            background: mode === "2layer" ? "#58a6ff" : "#21262d",
+            color: mode === "2layer" ? "#0d1117" : "#e6edf3",
+            border: "1px solid #30363d",
+            borderRadius: "6px",
+            padding: "6px 16px",
+            cursor: "pointer",
+            fontSize: "13px",
+            fontWeight: mode === "2layer" ? 600 : 400,
+          }}
+        >
+          2 Hidden Layers (96%)
+        </button>
+        <button
+          onClick={() => setMode("1layer")}
+          style={{
+            background: mode === "1layer" ? "#58a6ff" : "#21262d",
+            color: mode === "1layer" ? "#0d1117" : "#e6edf3",
+            border: "1px solid #30363d",
+            borderRadius: "6px",
+            padding: "6px 16px",
+            cursor: "pointer",
+            fontSize: "13px",
+            fontWeight: mode === "1layer" ? 600 : 400,
+          }}
+        >
+          No Hidden Layers (92%)
+        </button>
+      </div>
 
       {!nn ? (
         <p style={{ color: "#f85149" }}>
@@ -215,20 +258,37 @@ export default function App() {
                 border: "1px solid #30363d",
               }}
             />
-            <button
-              onClick={clearCanvas}
-              style={{
-                background: "#21262d",
-                color: "#e6edf3",
-                border: "1px solid #30363d",
-                borderRadius: "6px",
-                padding: "8px 24px",
-                cursor: "pointer",
-                fontSize: "14px",
-              }}
-            >
-              Clear
-            </button>
+            <div style={{ display: "flex", gap: "8px" }}>
+              <button
+                onClick={clearCanvas}
+                style={{
+                  background: "#21262d",
+                  color: "#e6edf3",
+                  border: "1px solid #30363d",
+                  borderRadius: "6px",
+                  padding: "8px 24px",
+                  cursor: "pointer",
+                  fontSize: "14px",
+                }}
+              >
+                Clear
+              </button>
+              <button
+                onClick={toggleLiveInference}
+                style={{
+                  background: liveInference ? "#58a6ff" : "#21262d",
+                  color: liveInference ? "#0d1117" : "#e6edf3",
+                  border: "1px solid #30363d",
+                  borderRadius: "6px",
+                  padding: "8px 16px",
+                  cursor: "pointer",
+                  fontSize: "13px",
+                  fontWeight: liveInference ? 600 : 400,
+                }}
+              >
+                {liveInference ? "Live" : "Paused"}
+              </button>
+            </div>
           </div>
 
           {/* Network visualization */}
@@ -336,12 +396,12 @@ function NetworkVis({
 }) {
   if (!networkData) return null;
 
-  const layers = networkData.sizes; // [784, 16, 16, 10]
-  const svgWidth = 360;
+  const layers = networkData.sizes;
+  const displayLayers = layers.slice(1); // skip 784 input neurons
+  const numCols = displayLayers.length + 1; // +1 for input box
+  const svgWidth = numCols * 80 + 40;
   const svgHeight = 400;
-  const layerXPositions = [60, 140, 220, 300];
-  // Only visualize hidden + output layers as circles (skip 784 input neurons)
-  const displayLayers = [16, 16, 10];
+  const layerXPositions = Array.from({ length: numCols }, (_, i) => 60 + i * 80);
 
   const getNeuronY = (layerSize: number, index: number) => {
     const totalHeight = layerSize * 22;
@@ -367,12 +427,13 @@ function NetworkVis({
         Network
       </p>
       <svg width={svgWidth} height={svgHeight}>
-        {/* Connections between hidden1→hidden2 and hidden2→output */}
-        {[1, 2].map((l) => {
-          const fromSize = displayLayers[l - 1];
-          const toSize = displayLayers[l];
-          const fromX = layerXPositions[l];
-          const toX = layerXPositions[l + 1];
+        {/* Connections between non-input layers */}
+        {displayLayers.slice(1).map((_, li) => {
+          const l = li + 1;
+          const fromSize = displayLayers[li];
+          const toSize = displayLayers[li + 1];
+          const fromX = layerXPositions[li + 1];
+          const toX = layerXPositions[li + 2];
           return Array.from({ length: toSize }, (_, j) =>
             Array.from({ length: fromSize }, (_, k) => {
               const w = networkData.weights[l]?.[j]?.[k] ?? 0;
@@ -429,7 +490,7 @@ function NetworkVis({
           </>
         )}
 
-        {/* Connections from input box to hidden1 */}
+        {/* Connections from input box to first display layer */}
         {Array.from({ length: displayLayers[0] }, (_, j) => (
           <line
             key={`input-${j}`}
@@ -442,10 +503,11 @@ function NetworkVis({
           />
         ))}
 
-        {/* Neurons for hidden and output layers */}
+        {/* Neurons for all display layers */}
         {displayLayers.map((size, li) => {
           const x = layerXPositions[li + 1];
-          const layerLabel = li < 2 ? `Hidden ${li + 1}` : "Output";
+          const isOutput = li === displayLayers.length - 1;
+          const layerLabel = isOutput ? "Output" : `Hidden ${li + 1}`;
           return (
             <g key={`layer-${li}`}>
               <text x={x} y={svgHeight - 10} textAnchor="middle" fill="#484f58" fontSize="11">
