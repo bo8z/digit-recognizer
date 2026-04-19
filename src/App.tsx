@@ -22,17 +22,94 @@ export default function App() {
   const getPixels = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return null;
-    const offscreen = document.createElement("canvas");
-    offscreen.width = 28;
-    offscreen.height = 28;
-    const offCtx = offscreen.getContext("2d")!;
-    offCtx.drawImage(canvas, 0, 0, 28, 28);
-    const imageData = offCtx.getImageData(0, 0, 28, 28);
-    const pixels: number[] = new Array(784);
-    for (let i = 0; i < 784; i++) {
-      pixels[i] = imageData.data[i * 4 + 3] / 255; // alpha channel (we draw white on transparent)
+
+    // Step 1: Get raw pixels from the full canvas at native resolution
+    const rawCtx = canvas.getContext("2d")!;
+    const rawData = rawCtx.getImageData(0, 0, 280, 280);
+    const raw = rawData.data;
+
+    // Build a grayscale 280×280 image from alpha channel
+    const img280: number[] = new Array(280 * 280);
+    for (let i = 0; i < 280 * 280; i++) img280[i] = raw[i * 4 + 3] / 255;
+
+    // Step 2: Find bounding box of the drawn digit
+    let top = 280, bottom = 0, left = 280, right = 0;
+    for (let y = 0; y < 280; y++) {
+      for (let x = 0; x < 280; x++) {
+        if (img280[y * 280 + x] > 0.01) {
+          if (y < top) top = y;
+          if (y > bottom) bottom = y;
+          if (x < left) left = x;
+          if (x > right) right = x;
+        }
+      }
     }
-    return pixels;
+    if (top > bottom) return null; // nothing drawn
+
+    // Step 3: Crop to bounding box and resize to fit 20×20 preserving aspect ratio
+    const bw = right - left + 1;
+    const bh = bottom - top + 1;
+    const cropCanvas = document.createElement("canvas");
+    cropCanvas.width = bw;
+    cropCanvas.height = bh;
+    const cropCtx = cropCanvas.getContext("2d")!;
+    cropCtx.drawImage(canvas, left, top, bw, bh, 0, 0, bw, bh);
+
+    // Resize to fit in 20×20 box preserving aspect ratio
+    const scale = 20 / Math.max(bw, bh);
+    const sw = Math.round(bw * scale);
+    const sh = Math.round(bh * scale);
+    const fitCanvas = document.createElement("canvas");
+    fitCanvas.width = sw;
+    fitCanvas.height = sh;
+    const fitCtx = fitCanvas.getContext("2d")!;
+    fitCtx.drawImage(cropCanvas, 0, 0, sw, sh);
+
+    // Step 4: Place in 28×28 canvas centered (initially pad to center of box)
+    const padCanvas = document.createElement("canvas");
+    padCanvas.width = 28;
+    padCanvas.height = 28;
+    const padCtx = padCanvas.getContext("2d")!;
+    const ox = Math.round((28 - sw) / 2);
+    const oy = Math.round((28 - sh) / 2);
+    padCtx.drawImage(fitCanvas, ox, oy);
+
+    // Read the 28×28 pixels
+    const padData = padCtx.getImageData(0, 0, 28, 28);
+    const px: number[] = new Array(784);
+    for (let i = 0; i < 784; i++) px[i] = padData.data[i * 4 + 3] / 255;
+
+    // Step 5: Compute center of mass and shift to center
+    let cx = 0, cy = 0, total = 0;
+    for (let y = 0; y < 28; y++) {
+      for (let x = 0; x < 28; x++) {
+        const v = px[y * 28 + x];
+        cx += x * v;
+        cy += y * v;
+        total += v;
+      }
+    }
+    if (total > 0) {
+      cx /= total;
+      cy /= total;
+      const shiftX = Math.round(14 - cx);
+      const shiftY = Math.round(14 - cy);
+
+      // Apply shift
+      const shifted: number[] = new Array(784).fill(0);
+      for (let y = 0; y < 28; y++) {
+        for (let x = 0; x < 28; x++) {
+          const sy = y - shiftY;
+          const sx = x - shiftX;
+          if (sy >= 0 && sy < 28 && sx >= 0 && sx < 28) {
+            shifted[y * 28 + x] = px[sy * 28 + sx];
+          }
+        }
+      }
+      return shifted;
+    }
+
+    return px;
   }, []);
 
   const runInference = useCallback(() => {
