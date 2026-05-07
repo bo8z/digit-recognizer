@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx --no-install prettier --print-width 1 --write public/weights-1layer.json)"
+    ]
+  }
+}

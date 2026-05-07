@@ -8,28 +8,40 @@ function sigmoid(x) {
 
 export class NeuralNetwork {
   constructor(data) {
-    this.sizes = data.sizes;
+    this.neuronsPerLayer = data.sizes;
     this.weights = data.weights;
     this.biases = data.biases;
   }
 
   forward(input) {
     const activations = [input];
-    const numLayers = this.sizes.length;
 
-    for (let l = 0; l < numLayers - 1; l++) {
-      const prev = activations[l];
-      const size = this.sizes[l + 1];
-      const a = new Array(size);
+    for (
+      let edgeLayer = 0; 
+      edgeLayer < this.neuronsPerLayer.length - 1; 
+      edgeLayer++
+    ) {
 
-      for (let j = 0; j < size; j++) {
-        let sum = this.biases[l][j];
-        for (let k = 0; k < prev.length; k++) {
-          sum += this.weights[l][j][k] * prev[k];
+      const prevActivations = activations[edgeLayer];
+      const edgeLayerActivations = new Array(this.neuronsPerLayer[edgeLayer + 1]);
+
+      for (
+        let neuron = 0; 
+        neuron < this.neuronsPerLayer[edgeLayer + 1]; 
+        neuron++
+      ) {
+
+        let weightedSum = this.biases[edgeLayer][neuron];
+
+        for (
+          let input = 0; 
+          input < prevActivations.length; input++) {
+          weightedSum += this.weights[edgeLayer][neuron][input] * prevActivations[input];
         }
-        a[j] = l < numLayers - 2 ? relu(sum) : sigmoid(sum);
+        edgeLayerActivations[neuron] = edgeLayer < this.neuronsPerLayer.length - 2 ? relu(weightedSum) : sigmoid(weightedSum);
       }
-      activations.push(a);
+
+      activations.push(edgeLayerActivations);
     }
 
     return { activations };
