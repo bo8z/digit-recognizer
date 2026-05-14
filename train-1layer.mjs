@@ -59,7 +59,7 @@ function reluPrime(x) {
 // --- Neural Network ---
 class Network {
   constructor(sizes) {
-    this.sizes = sizes; // e.g. [784, 16, 16, 10]
+    this.sizes = sizes; 
     this.numLayers = sizes.length;
 
     // Initialize weights and biases (He initialization for hidden, Xavier for output)
