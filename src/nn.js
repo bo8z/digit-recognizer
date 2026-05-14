@@ -16,26 +16,13 @@ export class NeuralNetwork {
   forward(input) {
     const activations = [input];
 
-    for (
-      let edgeLayer = 0; 
-      edgeLayer < this.neuronsPerLayer.length - 1; 
-      edgeLayer++
-    ) {
-
+    for (let edgeLayer = 0; edgeLayer < this.neuronsPerLayer.length - 1; edgeLayer++) {
       const prevActivations = activations[edgeLayer];
       const edgeLayerActivations = new Array(this.neuronsPerLayer[edgeLayer + 1]);
 
-      for (
-        let neuron = 0; 
-        neuron < this.neuronsPerLayer[edgeLayer + 1]; 
-        neuron++
-      ) {
-
+      for (let neuron = 0; neuron < this.neuronsPerLayer[edgeLayer + 1]; neuron++) {
         let weightedSum = this.biases[edgeLayer][neuron];
-
-        for (
-          let input = 0; 
-          input < prevActivations.length; input++) {
+        for (let input = 0; input < prevActivations.length; input++) {
           weightedSum += this.weights[edgeLayer][neuron][input] * prevActivations[input];
         }
         edgeLayerActivations[neuron] = edgeLayer < this.neuronsPerLayer.length - 2 ? relu(weightedSum) : sigmoid(weightedSum);
