@@ -16,8 +16,6 @@ export interface SceneParameter {
 interface SceneState {
   colors: THREE.BufferAttribute;
   opacities: THREE.BufferAttribute;
-  baseColors: Float32Array;
-  baseOpacities: Float32Array;
   edgeIds: string[];
   layerMeshes: THREE.InstancedMesh[];
   neuronBaseColors: THREE.Color[][];
@@ -32,13 +30,13 @@ interface HoverPreview {
 
 export function TrainingNetworkScene({
   architecture,
-  inputPixels,
+  activations,
   parameters,
   selectedId,
   onSelect,
 }: {
-  architecture: number[];
-  inputPixels: number[];
+  architecture: readonly number[];
+  activations: number[][];
   parameters: SceneParameter[];
   selectedId: string;
   onSelect: (id: string) => void;
@@ -51,6 +49,8 @@ export function TrainingNetworkScene({
     () => new Map(parameters.map((parameter) => [parameter.id, parameter])),
     [parameters],
   );
+  const parameterByIdRef = useRef(parameterById);
+  const activationsRef = useRef(activations);
   const hoveredParameter = hovered ? parameterById.get(hovered.id) : undefined;
   const hoveredInputIndex =
     hovered?.id.startsWith("a-0-") ? Number(hovered.id.slice(4)) : null;
@@ -58,6 +58,14 @@ export function TrainingNetworkScene({
   useEffect(() => {
     onSelectRef.current = onSelect;
   }, [onSelect]);
+
+  useEffect(() => {
+    parameterByIdRef.current = parameterById;
+  }, [parameterById]);
+
+  useEffect(() => {
+    activationsRef.current = activations;
+  }, [activations]);
 
   useEffect(() => {
     const mount = mountRef.current;
@@ -273,7 +281,7 @@ export function TrainingNetworkScene({
         transform.position.copy(position);
         transform.updateMatrix();
         mesh.setMatrixAt(index, transform.matrix);
-        const activation = isInput ? inputPixels[index] ?? 0 : previewActivation(layer, index);
+        const activation = activationsRef.current[layer]?.[index] ?? 0;
         const color = inactive.clone().lerp(active, activation);
         mesh.setColorAt(index, color);
         baseColors.push(color);
@@ -288,7 +296,28 @@ export function TrainingNetworkScene({
       neuronBaseColors.push(baseColors);
     });
 
-    const weightParameters = parameters.filter((parameter) => parameter.kind === "weight");
+    const weightParameters: SceneParameter[] = [];
+    for (let layer = 0; layer < architecture.length - 1; layer++) {
+      for (
+        let destination = 0;
+        destination < architecture[layer + 1];
+        destination++
+      ) {
+        for (let source = 0; source < architecture[layer]; source++) {
+          const id = `w-${layer}-${destination}-${source}`;
+          weightParameters.push(
+            parameterByIdRef.current.get(id) ?? {
+              id,
+              kind: "weight",
+              layer,
+              source,
+              destination,
+              value: 0,
+            },
+          );
+        }
+      }
+    }
     const positions = new Float32Array(weightParameters.length * 6);
     const colors = new Float32Array(weightParameters.length * 6);
     const opacities = new Float32Array(weightParameters.length * 2);
@@ -355,8 +384,6 @@ export function TrainingNetworkScene({
     sceneStateRef.current = {
       colors: colorAttribute,
       opacities: opacityAttribute,
-      baseColors: colors.slice(),
-      baseOpacities: opacities.slice(),
       edgeIds,
       layerMeshes,
       neuronBaseColors,
@@ -387,7 +414,7 @@ export function TrainingNetworkScene({
       const id = getSceneItemAtPointer(event);
       const rect = renderer.domElement.getBoundingClientRect();
       renderer.domElement.style.cursor = id
-        ? parameterById.has(id)
+        ? parameterByIdRef.current.has(id)
           ? "pointer"
           : "crosshair"
         : "grab";
@@ -404,7 +431,7 @@ export function TrainingNetworkScene({
     };
     const handleClick = (event: PointerEvent) => {
       const id = getSceneItemAtPointer(event);
-      if (id && parameterById.has(id)) onSelectRef.current(id);
+      if (id && parameterByIdRef.current.has(id)) onSelectRef.current(id);
     };
     const handlePointerLeave = () => {
       renderer.domElement.style.cursor = "grab";
@@ -454,33 +481,51 @@ export function TrainingNetworkScene({
       layerMeshes.length = 0;
       sceneStateRef.current = null;
     };
-  }, [architecture, inputPixels, parameterById, parameters]);
+  }, [architecture]);
 
   useEffect(() => {
     const state = sceneStateRef.current;
     if (!state) return;
     const colorArray = state.colors.array as Float32Array;
     const opacityArray = state.opacities.array as Float32Array;
+    const positive = new THREE.Color(0x58a6ff);
+    const negative = new THREE.Color(0xff6b63);
 
     state.edgeIds.forEach((id, index) => {
       const colorOffset = index * 6;
       const opacityOffset = index * 2;
+      const value = parameterById.get(id)?.value ?? 0;
+      const baseColor = value >= 0 ? positive : negative;
+      const baseOpacity = 0.025 + Math.min(Math.abs(value) / 0.6, 1) * 0.2;
       const selected = id === selectedId;
       const previewed = id === hovered?.id;
 
-      for (let component = 0; component < 6; component++) {
-        const baseColor = state.baseColors[colorOffset + component];
-        colorArray[colorOffset + component] = selected
+      for (let vertex = 0; vertex < 2; vertex++) {
+        const vertexOffset = colorOffset + vertex * 3;
+        const red = selected
           ? 1
           : previewed
-            ? baseColor + (1 - baseColor) * 0.58
-            : baseColor;
+            ? baseColor.r + (1 - baseColor.r) * 0.58
+            : baseColor.r;
+        const green = selected
+          ? 1
+          : previewed
+            ? baseColor.g + (1 - baseColor.g) * 0.58
+            : baseColor.g;
+        const blue = selected
+          ? 1
+          : previewed
+            ? baseColor.b + (1 - baseColor.b) * 0.58
+            : baseColor.b;
+        colorArray[vertexOffset] = red;
+        colorArray[vertexOffset + 1] = green;
+        colorArray[vertexOffset + 2] = blue;
       }
       const opacity = selected
         ? 1
         : previewed
           ? 0.82
-          : state.baseOpacities[opacityOffset] * 0.38;
+          : baseOpacity * 0.38;
       opacityArray[opacityOffset] = opacity;
       opacityArray[opacityOffset + 1] = opacity;
     });
@@ -498,9 +543,20 @@ export function TrainingNetworkScene({
         : -1;
     const selectedBiasColor = new THREE.Color(0xd29922);
     const hoveredNeuronColor = new THREE.Color(0x58a6ff);
+    const activeNeuronColor = new THREE.Color(0xf0f6fc);
 
     state.layerMeshes.forEach((mesh, layer) => {
+      const inactiveNeuronColor = new THREE.Color(
+        layer === 0 ? 0x242b34 : 0x28313b,
+      );
       state.neuronBaseColors[layer].forEach((baseColor, neuron) => {
+        const activation = Math.max(
+          0,
+          Math.min(1, activations[layer]?.[neuron] ?? 0),
+        );
+        baseColor
+          .copy(inactiveNeuronColor)
+          .lerp(activeNeuronColor, activation);
         const selected = layer === selectedBiasLayer && neuron === selectedBiasNeuron;
         const previewed = layer === hoveredNeuronLayer && neuron === hoveredNeuron;
         mesh.setColorAt(
@@ -513,7 +569,7 @@ export function TrainingNetworkScene({
 
     state.colors.needsUpdate = true;
     state.opacities.needsUpdate = true;
-  }, [hovered?.id, selectedId]);
+  }, [activations, hovered?.id, parameterById, selectedId]);
 
   return (
     <div
@@ -561,7 +617,7 @@ export function TrainingNetworkScene({
           >
             {hoveredParameter
               ? `${hoveredParameter.kind === "weight" ? "Weight" : "Bias"} · ${formatSceneValue(hoveredParameter.value)}`
-              : `Input activation · ${formatSceneValue(inputPixels[hoveredInputIndex ?? 0] ?? 0)}`}
+              : `Input activation · ${formatSceneValue(activations[0]?.[hoveredInputIndex ?? 0] ?? 0)}`}
           </p>
         </div>
       )}
@@ -609,15 +665,6 @@ function createLayerPositions(count: number, layer: number, layerCount: number) 
 
 function layerX(layer: number, layerCount: number) {
   return (layer - (layerCount - 1) / 2) * 8.2;
-}
-
-function previewActivation(layer: number, index: number) {
-  return 0.08 + hashValue(layer * 137 + index * 19) * 0.48;
-}
-
-function hashValue(seed: number) {
-  const value = Math.sin(seed * 12.9898 + 78.233) * 43758.5453;
-  return value - Math.floor(value);
 }
 
 function formatSceneValue(value: number) {
