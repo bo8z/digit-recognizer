@@ -1,5 +1,8 @@
 import {
   ARCHITECTURE,
+  LANDSCAPE_MAX,
+  LANDSCAPE_MIN,
+  LANDSCAPE_POINT_COUNT,
   PARAMETER_COUNT,
   type LandscapeData,
   type ParameterDescriptor,
@@ -345,73 +348,62 @@ export function samplePixels(dataset: UspsDataset, sample: number): Uint8Array {
 export function computeExactLandscape(
   network: UspsNetwork,
   dataset: UspsDataset,
-  sampleIndices: number[],
   parameter: ParameterDescriptor,
   snapshotVersion: number,
-  gradient: number,
-  learningRate: number,
+  optimizerStep: number,
 ): LandscapeData {
-  const pointCount = 81;
   const center = readParameter(network, parameter);
-  const radius = Math.max(
-    0.45,
-    Math.min(1.5, Math.abs(center) * 1.5 + Math.abs(gradient) * learningRate * 8),
-  );
-  const xValues = new Float32Array(pointCount);
-  const losses = new Float32Array(pointCount);
+  const xValues = new Float32Array(LANDSCAPE_POINT_COUNT);
+  const lossTotals = new Float64Array(LANDSCAPE_POINT_COUNT);
+  const losses = new Float32Array(LANDSCAPE_POINT_COUNT);
   const scratch = network.createScratch();
-  const samples = sampleIndices.length > 0 ? sampleIndices : [0];
-  const caches = samples.map((sampleIndex) => {
+  const changedHidden2 = new Float32Array(HIDDEN_2_SIZE);
+  let currentLoss = 0;
+
+  for (let point = 0; point < LANDSCAPE_POINT_COUNT; point++) {
+    xValues[point] =
+      LANDSCAPE_MIN +
+      (point / (LANDSCAPE_POINT_COUNT - 1)) *
+        (LANDSCAPE_MAX - LANDSCAPE_MIN);
+  }
+
+  for (let sampleIndex = 0; sampleIndex < dataset.count; sampleIndex++) {
     const pixels = samplePixels(dataset, sampleIndex);
     network.forward(pixels, scratch);
-    return {
+    const cache = {
       label: dataset.labels[sampleIndex],
-      input: scratch.activations[0].slice(),
-      hidden1: scratch.activations[1].slice(),
-      hidden2: scratch.activations[2].slice(),
-      output: scratch.activations[3].slice(),
-      z1: scratch.weightedInputs[0].slice(),
-      z2: scratch.weightedInputs[1].slice(),
-      z3: scratch.weightedInputs[2].slice(),
+      input: scratch.activations[0],
+      hidden1: scratch.activations[1],
+      hidden2: scratch.activations[2],
+      output: scratch.activations[3],
+      z1: scratch.weightedInputs[0],
+      z2: scratch.weightedInputs[1],
+      z3: scratch.weightedInputs[2],
     };
-  });
 
-  for (let point = 0; point < pointCount; point++) {
-    const candidate =
-      center - radius + (point / (pointCount - 1)) * radius * 2;
-    xValues[point] = candidate;
-    let totalLoss = 0;
-
-    for (const cache of caches) {
-      totalLoss += evaluateChangedParameterLoss(
+    currentLoss += sampleOutputLoss(cache.output, cache.label);
+    for (let point = 0; point < LANDSCAPE_POINT_COUNT; point++) {
+      lossTotals[point] += evaluateChangedParameterLoss(
         network,
         cache,
         parameter,
-        candidate - center,
+        xValues[point] - center,
+        changedHidden2,
       );
     }
-    losses[point] = totalLoss / caches.length;
   }
 
-  const nextValue = center - learningRate * gradient;
-  let nextLoss = 0;
-  for (const cache of caches) {
-    nextLoss += evaluateChangedParameterLoss(
-      network,
-      cache,
-      parameter,
-      nextValue - center,
-    );
+  for (let point = 0; point < LANDSCAPE_POINT_COUNT; point++) {
+    losses[point] = lossTotals[point] / dataset.count;
   }
 
   return {
     parameterId: parameter.id,
     snapshotVersion,
+    optimizerStep,
     center,
-    gradient,
-    nextValue,
-    nextLoss: nextLoss / caches.length,
-    batchSize: samples.length,
+    currentLoss: currentLoss / dataset.count,
+    sampleCount: dataset.count,
     xValues,
     losses,
   };
@@ -431,6 +423,7 @@ function evaluateChangedParameterLoss(
   },
   parameter: ParameterDescriptor,
   difference: number,
+  changedHidden2: Float32Array,
 ) {
   if (parameter.layer === 0) {
     const inputFactor =
@@ -440,8 +433,6 @@ function evaluateChangedParameterLoss(
     const changedHidden1 = Math.max(0, changedZ1);
     const hidden1Difference =
       changedHidden1 - cache.hidden1[parameter.destination];
-    const changedHidden2 = new Float32Array(HIDDEN_2_SIZE);
-
     for (let destination = 0; destination < HIDDEN_2_SIZE; destination++) {
       const changedZ2 =
         cache.z2[destination] +
@@ -505,6 +496,16 @@ function evaluateChangedParameterLoss(
     const target = outputIndex === cache.label ? 1 : 0;
     const outputDifference = activation - target;
     loss += 0.5 * outputDifference * outputDifference;
+  }
+  return loss;
+}
+
+function sampleOutputLoss(output: Float32Array, label: number) {
+  let loss = 0;
+  for (let outputIndex = 0; outputIndex < OUTPUT_SIZE; outputIndex++) {
+    const target = outputIndex === label ? 1 : 0;
+    const difference = output[outputIndex] - target;
+    loss += 0.5 * difference * difference;
   }
   return loss;
 }

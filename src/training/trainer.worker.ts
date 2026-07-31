@@ -55,7 +55,6 @@ let runTimer: number | null = null;
 let awaitingSnapshotAck = false;
 let testAccuracy: number | null = null;
 let selectedParameterId = "w-0-6-93";
-let visualSampleIndices: number[] = [];
 let visualGradients: Float32Array<ArrayBufferLike> = new Float32Array(
   descriptors.length,
 );
@@ -80,7 +79,7 @@ async function handleCommand(command: TrainerCommand) {
       ensureInitialized();
       pause();
       processOneSample();
-      if (accumulatedCount > 0) postSnapshot(false);
+      if (accumulatedCount > 0) postSnapshot();
       break;
     case "step-batch":
       ensureInitialized();
@@ -154,7 +153,6 @@ function resetTraining() {
   currentSampleLoss = 0;
   snapshotVersion = 0;
   testAccuracy = null;
-  visualSampleIndices = [];
   visualGradients = new Float32Array(descriptors.length);
   awaitingSnapshotAck = false;
 }
@@ -238,9 +236,10 @@ function finishBatch() {
     order.subarray(batchStart, batchStart + completedBatchSize),
   );
 
-  postSnapshot(true, completedIndices);
   network.applyGradients(gradients, LEARNING_RATE, completedBatchSize);
   optimizerStep++;
+  refreshCurrentSampleView();
+  postSnapshot();
   batchStart += completedBatchSize;
   sampleOffset = 0;
   accumulatedCount = 0;
@@ -280,7 +279,6 @@ function postInitialSnapshot() {
   currentPrediction = result.prediction;
   currentSampleLoss = result.loss;
   visualizationNetwork.copyFrom(network);
-  visualSampleIndices = [sampleIndex];
   visualGradients = network.flattenGradients(probeGradients, 1);
   scratch = probeScratch;
   postSnapshotMessage({
@@ -292,25 +290,36 @@ function postInitialSnapshot() {
   });
 }
 
-function postSnapshot(
-  applyingUpdate: boolean,
-  explicitIndices?: number[],
-) {
-  const indices =
-    explicitIndices ??
-    Array.from(order.subarray(batchStart, batchStart + accumulatedCount));
+function postSnapshot() {
   visualizationNetwork.copyFrom(network);
-  visualSampleIndices = indices;
   visualGradients = network.flattenGradients(gradients, accumulatedCount);
 
   postSnapshotMessage({
     gradientsForView: visualGradients,
     lossForView:
       accumulatedCount > 0 ? accumulatedLoss / accumulatedCount : null,
-    optimizerStepForView: optimizerStep + (applyingUpdate ? 1 : 0),
+    optimizerStepForView: optimizerStep,
     sampleForView: accumulatedCount,
     samplesInBatchForView: currentBatchSize(),
   });
+}
+
+function refreshCurrentSampleView() {
+  const dataset = requireTrainDataset();
+  network.forward(samplePixels(dataset, currentSampleIndex), scratch);
+  const output = scratch.activations[3];
+  let prediction = 0;
+  let loss = 0;
+
+  for (let outputIndex = 0; outputIndex < output.length; outputIndex++) {
+    const target = outputIndex === dataset.labels[currentSampleIndex] ? 1 : 0;
+    const difference = output[outputIndex] - target;
+    loss += 0.5 * difference * difference;
+    if (output[outputIndex] > output[prediction]) prediction = outputIndex;
+  }
+
+  currentPrediction = prediction;
+  currentSampleLoss = loss;
 }
 
 function postFinalSnapshot(sampleIndices: number[]) {
@@ -335,7 +344,6 @@ function postFinalSnapshot(sampleIndices: number[]) {
   currentSampleLoss = latestResult.loss;
   scratch = probeScratch;
   visualizationNetwork.copyFrom(network);
-  visualSampleIndices = sampleIndices;
   visualGradients = network.flattenGradients(
     probeGradients,
     sampleIndices.length,
@@ -412,7 +420,7 @@ function postSnapshotMessage({
 }
 
 function postSelectedLandscape() {
-  if (!initialized || visualSampleIndices.length === 0) return;
+  if (!initialized) return;
   const landscape = createSelectedLandscape();
   if (!landscape) return;
   landscape.snapshotVersion = snapshotVersion;
@@ -425,17 +433,14 @@ function postSelectedLandscape() {
 
 function createSelectedLandscape(): LandscapeData | null {
   const descriptor = descriptorById.get(selectedParameterId);
-  const index = parameterIndex(selectedParameterId);
-  if (!descriptor || index < 0 || visualSampleIndices.length === 0) return null;
+  if (!descriptor || parameterIndex(selectedParameterId) < 0) return null;
 
   return computeExactLandscape(
     visualizationNetwork,
     requireTrainDataset(),
-    visualSampleIndices,
     descriptor,
     snapshotVersion,
-    visualGradients[index] ?? 0,
-    LEARNING_RATE,
+    optimizerStep,
   );
 }
 

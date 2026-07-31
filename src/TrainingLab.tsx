@@ -4,7 +4,6 @@ import { TrainingNetworkScene } from "./TrainingNetworkScene";
 import type { SceneParameter } from "./TrainingNetworkScene";
 import {
   ARCHITECTURE,
-  LEARNING_RATE,
   buildParameterDescriptors,
   type LandscapeData,
 } from "./training/types";
@@ -419,11 +418,10 @@ function SelectedParameterPanel({
               fontVariantNumeric: "tabular-nums",
             }}
           >
-            value {formatSigned(selected.value, 5)} · gradient{" "}
-            {formatSigned(selected.gradient, 5)} · η {LEARNING_RATE.toFixed(2)}
+            value {formatSigned(selected.value, 5)}
             {landscape
-              ? ` · next ${formatSigned(landscape.nextValue, 5)}`
-              : ""}
+              ? ` · full-data loss ${landscape.currentLoss.toFixed(5)} · step ${landscape.optimizerStep.toLocaleString()}`
+              : " · calculating full range…"}
           </span>
         </div>
       </div>
@@ -734,97 +732,180 @@ function LandscapePreview({
   landscape: LandscapeData | null;
 }) {
   const width = 378;
-  const height = 262;
-  const left = 44;
+  const height = 308;
+  const left = 54;
   const right = 14;
-  const top = 12;
-  const bottom = 34;
+  const top = 24;
+  const bottom = 58;
   const points = landscape
     ? Array.from(landscape.xValues, (x, index) => ({
         x,
         loss: landscape.losses[index],
       }))
     : [];
-  const domainStart = points[0]?.x ?? parameter.value - 0.5;
-  const domainEnd = points.at(-1)?.x ?? parameter.value + 0.5;
+  const domainStart = points[0]?.x ?? -5;
+  const domainEnd = points.at(-1)?.x ?? 5;
   const domainSpan = Math.max(domainEnd - domainStart, 0.000001);
-  const minLoss = Math.min(...points.map((point) => point.loss));
-  const maxLoss = Math.max(...points.map((point) => point.loss));
-  const lossSpan = Math.max(maxLoss - minLoss, 0.000001);
+  const rawMinLoss = points.length
+    ? Math.min(...points.map((point) => point.loss))
+    : 0;
+  const rawMaxLoss = points.length
+    ? Math.max(...points.map((point) => point.loss))
+    : 1;
+  const rawLossSpan = Math.max(rawMaxLoss - rawMinLoss, 0.000001);
+  const lossPadding = Math.max(rawLossSpan * 0.1, 0.00001);
+  const minLoss = Math.max(0, rawMinLoss - lossPadding);
+  const maxLoss = rawMaxLoss + lossPadding;
+  const lossSpan = maxLoss - minLoss;
+  const plotBottom = height - bottom;
+  const plotRight = width - right;
   const mapX = (x: number) =>
     left +
-    ((x - domainStart) / domainSpan) * (width - left - right);
+    ((x - domainStart) / domainSpan) * (plotRight - left);
   const mapY = (loss: number) =>
     top +
-    (1 - (loss - minLoss) / lossSpan) * (height - top - bottom);
+    (1 - (loss - minLoss) / lossSpan) * (plotBottom - top);
   const path = points
     .map(
       (point, index) =>
         `${index === 0 ? "M" : "L"} ${mapX(point.x).toFixed(1)} ${mapY(point.loss).toFixed(1)}`,
     )
     .join(" ");
-  const currentLoss =
-    landscape?.losses[Math.floor(landscape.losses.length / 2)] ?? 0;
-  const nextX =
-    landscape?.nextValue ??
-    parameter.value - LEARNING_RATE * parameter.gradient;
-  const nextLoss = landscape?.nextLoss ?? currentLoss;
-  const tangentRadius = domainSpan * 0.14;
+  const currentX = landscape?.center ?? parameter.value;
+  const currentLoss = landscape?.currentLoss ?? 0;
+  const xTicks = Array.from(
+    { length: 11 },
+    (_, index) => domainStart + (index / 10) * domainSpan,
+  );
+  const yTicks = Array.from(
+    { length: 5 },
+    (_, index) => minLoss + (index / 4) * lossSpan,
+  );
+  const localMinima = points.filter(
+    (point, index) =>
+      index > 0 &&
+      index < points.length - 1 &&
+      point.loss < points[index - 1].loss &&
+      point.loss <= points[index + 1].loss,
+  );
+  const lowestPoint = points.reduce<(typeof points)[number] | null>(
+    (lowest, point) => (!lowest || point.loss < lowest.loss ? point : lowest),
+    null,
+  );
+  const currentLabelX = Math.min(Math.max(mapX(currentX), left + 42), plotRight - 42);
 
   return (
     <svg
       viewBox={`0 0 ${width} ${height}`}
       role="img"
-      aria-label="Exact selected-parameter batch loss landscape"
-      style={{ width: "100%", height: "274px", display: "block" }}
+      aria-label="Full selected-parameter training loss landscape"
+      style={{ width: "100%", height: "320px", display: "block" }}
     >
-      {[0.25, 0.5, 0.75].map((fraction) => {
-        const y = top + fraction * (height - top - bottom);
+      {yTicks.map((loss) => {
+        const y = mapY(loss);
         return (
-          <line
-            key={fraction}
-            x1={left}
-            x2={width - right}
-            y1={y}
-            y2={y}
-            stroke="#21262d"
-          />
+          <g key={loss}>
+            <line
+              x1={left}
+              x2={plotRight}
+              y1={y}
+              y2={y}
+              stroke="#21262d"
+            />
+            <text
+              x={left - 7}
+              y={y + 3}
+              fill="#6e7681"
+              fontSize="8"
+              textAnchor="end"
+            >
+              {loss.toFixed(4)}
+            </text>
+          </g>
         );
       })}
+      {xTicks.map((value) => (
+        <g key={value}>
+          <line
+            x1={mapX(value)}
+            x2={mapX(value)}
+            y1={top}
+            y2={plotBottom}
+            stroke="#21262d"
+          />
+          <text
+            x={mapX(value)}
+            y={plotBottom + 16}
+            fill="#6e7681"
+            fontSize="8"
+            textAnchor="middle"
+          >
+            {value.toFixed(0)}
+          </text>
+        </g>
+      ))}
       <line
         x1={left}
         x2={left}
         y1={top}
-        y2={height - bottom}
+        y2={plotBottom}
         stroke="#484f58"
       />
       <line
         x1={left}
-        x2={width - right}
-        y1={height - bottom}
-        y2={height - bottom}
+        x2={plotRight}
+        y1={plotBottom}
+        y2={plotBottom}
         stroke="#484f58"
       />
       {landscape ? (
         <>
           <path d={path} fill="none" stroke="#58a6ff" strokeWidth="2.2" />
+          {localMinima.map((point) => (
+            <circle
+              key={point.x}
+              cx={mapX(point.x)}
+              cy={mapY(point.loss)}
+              r="3"
+              fill="#0d1117"
+              stroke="#3fb950"
+              strokeWidth="1.5"
+            >
+              <title>
+                Local minimum sampled at {point.x.toFixed(4)} · loss{" "}
+                {point.loss.toFixed(6)}
+              </title>
+            </circle>
+          ))}
+          {lowestPoint && (
+            <>
+              <circle
+                cx={mapX(lowestPoint.x)}
+                cy={mapY(lowestPoint.loss)}
+                r="4"
+                fill="#3fb950"
+                stroke="#0d1117"
+                strokeWidth="1.5"
+              />
+              <text
+                x={mapX(lowestPoint.x)}
+                y={Math.max(top + 10, mapY(lowestPoint.loss) - 9)}
+                fill="#7ee787"
+                fontSize="8"
+                textAnchor="middle"
+              >
+                lowest x={lowestPoint.x.toFixed(2)}
+              </text>
+            </>
+          )}
           <line
-            x1={mapX(parameter.value - tangentRadius)}
-            y1={mapY(currentLoss - parameter.gradient * tangentRadius)}
-            x2={mapX(parameter.value + tangentRadius)}
-            y2={mapY(currentLoss + parameter.gradient * tangentRadius)}
-            stroke="#d29922"
-            strokeWidth="1.5"
-            strokeDasharray="4 4"
-          />
-          <line
-            x1={mapX(parameter.value)}
+            x1={mapX(currentX)}
+            x2={mapX(currentX)}
             y1={mapY(currentLoss)}
-            x2={mapX(nextX)}
-            y2={mapY(nextLoss)}
-            stroke="#f0f6fc"
-            strokeWidth="1.5"
-            markerEnd="url(#landscape-arrow)"
+            y2={plotBottom}
+            stroke="#d29922"
+            strokeWidth="1"
+            strokeDasharray="3 3"
           />
         </>
       ) : (
@@ -835,64 +916,49 @@ function LandscapePreview({
           fontSize="10"
           textAnchor="middle"
         >
-          Calculating exact batch-loss slice…
+          Calculating 321 exact full-training-set losses…
         </text>
       )}
-      <defs>
-        <marker
-          id="landscape-arrow"
-          viewBox="0 0 10 10"
-          refX="8"
-          refY="5"
-          markerWidth="5"
-          markerHeight="5"
-          orient="auto-start-reverse"
-        >
-          <path d="M 0 0 L 10 5 L 0 10 z" fill="#f0f6fc" />
-        </marker>
-      </defs>
       {landscape && (
         <>
           <circle
-            cx={mapX(parameter.value)}
+            cx={mapX(currentX)}
             cy={mapY(currentLoss)}
-            r="5"
-            fill="#0d1117"
+            r="5.5"
+            fill="#d29922"
             stroke="#f0f6fc"
             strokeWidth="2"
-          />
-          <circle
-            cx={mapX(nextX)}
-            cy={mapY(nextLoss)}
-            r="3.5"
+          >
+            <title>
+              Current value {currentX.toFixed(5)} · loss {currentLoss.toFixed(6)}
+            </title>
+          </circle>
+          <text
+            x={currentLabelX}
+            y={top - 8}
             fill="#d29922"
-          />
+            fontSize="8"
+            textAnchor="middle"
+          >
+            current x={currentX.toFixed(4)}
+          </text>
         </>
       )}
-      <text x="8" y="18" fill="#6e7681" fontSize="10">
+      <text x="8" y="12" fill="#6e7681" fontSize="9">
         Mean loss
       </text>
-      <text x={width - right} y={height - 8} fill="#6e7681" fontSize="10" textAnchor="end">
+      <text x={plotRight} y={plotBottom + 29} fill="#6e7681" fontSize="9" textAnchor="end">
         Parameter value
-      </text>
-      <text
-        x={mapX(parameter.value)}
-        y={height - 16}
-        fill="#8b949e"
-        fontSize="9"
-        textAnchor="middle"
-      >
-        {parameter.value.toFixed(4)}
       </text>
       {landscape && (
         <text
           x={left}
           y={height - 8}
           fill="#6e7681"
-          fontSize="9"
+          fontSize="8"
         >
-          Exact slice · {landscape.batchSize} USPS sample
-          {landscape.batchSize === 1 ? "" : "s"}
+          {landscape.xValues.length} exact evaluations ·{" "}
+          {landscape.sampleCount.toLocaleString()} USPS training samples
         </text>
       )}
     </svg>

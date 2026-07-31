@@ -3,6 +3,9 @@ export const BATCH_SIZE = 32;
 export const TOTAL_EPOCHS = 20;
 export const LEARNING_RATE = 0.08;
 export const PARAMETER_COUNT = 4554;
+export const LANDSCAPE_MIN = -5;
+export const LANDSCAPE_MAX = 5;
+export const LANDSCAPE_POINT_COUNT = 321;
 
 export interface ParameterDescriptor {
   id: string;
@@ -16,11 +19,10 @@ export interface ParameterDescriptor {
 export interface LandscapeData {
   parameterId: string;
   snapshotVersion: number;
+  optimizerStep: number;
   center: number;
-  gradient: number;
-  nextValue: number;
-  nextLoss: number;
-  batchSize: number;
+  currentLoss: number;
+  sampleCount: number;
   xValues: Float32Array;
   losses: Float32Array;
 }
