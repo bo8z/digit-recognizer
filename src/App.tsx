@@ -1,27 +1,26 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { NeuralNetwork } from "./nn";
+import { ThreeNetworkVis } from "./ThreeNetworkVis";
 import type { NetworkData, ForwardResult } from "./nn";
 
 export default function App() {
   const [nn, setNN] = useState<NeuralNetwork | null>(null);
   const [result, setResult] = useState<ForwardResult | null>(null);
   const [networkData, setNetworkData] = useState<NetworkData | null>(null);
-  const [mode, setMode] = useState<"2layer" | "1layer">("2layer");
   const [liveInference, setLiveInference] = useState(true);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const isDrawing = useRef(false);
 
   useEffect(() => {
-    const file = mode === "2layer" ? "/weights.json" : "/weights-1layer.json";
-    fetch(file)
+    fetch("/weights-1layer.json")
       .then((r) => r.json())
       .then((data: NetworkData) => {
         setNN(new NeuralNetwork(data));
         setNetworkData(data);
         setResult(null);
       })
-      .catch(() => console.error(`No ${file} found.`));
-  }, [mode]);
+      .catch(() => console.error("No /weights-1layer.json found."));
+  }, []);
 
   const getPixels = useCallback(() => {
     const canvas = canvasRef.current;
@@ -187,56 +186,36 @@ export default function App() {
       <h1 style={{ fontSize: "28px", fontWeight: 500, margin: "0 0 8px" }}>
         Neural Network Digit Recognizer
       </h1>
-      <p style={{ color: "#8b949e", margin: "0 0 16px", fontSize: "14px" }}>
-        {mode === "2layer" ? "784 → 16 → 16 → 10" : "784 → 10"} &nbsp;|&nbsp; Trained on MNIST from scratch
+      <p style={{ color: "#8b949e", margin: "0 0 32px", fontSize: "14px" }}>
+        784 → 10 &nbsp;|&nbsp; Trained on MNIST from scratch
       </p>
-      <div style={{ display: "flex", gap: "8px", marginBottom: "32px" }}>
-        <button
-          onClick={() => setMode("2layer")}
-          style={{
-            background: mode === "2layer" ? "#58a6ff" : "#21262d",
-            color: mode === "2layer" ? "#0d1117" : "#e6edf3",
-            border: "1px solid #30363d",
-            borderRadius: "6px",
-            padding: "6px 16px",
-            cursor: "pointer",
-            fontSize: "13px",
-            fontWeight: mode === "2layer" ? 600 : 400,
-          }}
-        >
-          2 Hidden Layers (96%)
-        </button>
-        <button
-          onClick={() => setMode("1layer")}
-          style={{
-            background: mode === "1layer" ? "#58a6ff" : "#21262d",
-            color: mode === "1layer" ? "#0d1117" : "#e6edf3",
-            border: "1px solid #30363d",
-            borderRadius: "6px",
-            padding: "6px 16px",
-            cursor: "pointer",
-            fontSize: "13px",
-            fontWeight: mode === "1layer" ? 600 : 400,
-          }}
-        >
-          No Hidden Layers (92%)
-        </button>
-      </div>
 
       {!nn ? (
         <p style={{ color: "#f85149" }}>
-          Loading weights... (if this persists, run: node train.mjs)
+          Loading weights... (if this persists, run: node train-1layer.mjs)
         </p>
       ) : (
         <div
           style={{
+            width: "min(1900px, 100%)",
             display: "flex",
-            gap: "48px",
             alignItems: "flex-start",
-            flexWrap: "wrap",
             justifyContent: "center",
+            flexWrap: "wrap",
+            gap: "32px",
           }}
         >
+          <div
+            style={{
+              flex: "1 1 720px",
+              minWidth: 0,
+              display: "flex",
+              gap: "48px",
+              alignItems: "flex-start",
+              flexWrap: "wrap",
+              justifyContent: "center",
+            }}
+          >
           {/* Drawing area */}
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "12px" }}>
             <p style={{ color: "#8b949e", fontSize: "13px", margin: 0 }}>
@@ -381,6 +360,8 @@ export default function App() {
               </p>
             )}
           </div>
+          </div>
+          {networkData && <ThreeNetworkVis result={result} networkData={networkData} />}
         </div>
       )}
     </div>
