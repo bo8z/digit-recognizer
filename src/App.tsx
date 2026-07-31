@@ -1,9 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { NeuralNetwork } from "./nn";
 import { ThreeNetworkVis } from "./ThreeNetworkVis";
+import { TrainingLab } from "./TrainingLab";
 import type { NetworkData, ForwardResult } from "./nn";
 
 export default function App() {
+  const [workspace, setWorkspace] = useState<"recognizer" | "training">("training");
   const [nn, setNN] = useState<NeuralNetwork | null>(null);
   const [result, setResult] = useState<ForwardResult | null>(null);
   const [networkData, setNetworkData] = useState<NetworkData | null>(null);
@@ -165,6 +167,10 @@ export default function App() {
     setResult(null);
   };
 
+  if (workspace === "training") {
+    return <TrainingLab onOpenRecognizer={() => setWorkspace("recognizer")} />;
+  }
+
   const outputActivations = result?.activations[result.activations.length - 1];
   const prediction = outputActivations
     ? outputActivations.indexOf(Math.max(...outputActivations))
@@ -183,6 +189,21 @@ export default function App() {
         fontFamily: "system-ui, sans-serif",
       }}
     >
+      <button
+        onClick={() => setWorkspace("training")}
+        style={{
+          marginBottom: "18px",
+          padding: "7px 13px",
+          border: "1px solid #30363d",
+          borderRadius: "6px",
+          background: "#21262d",
+          color: "#c9d1d9",
+          cursor: "pointer",
+          fontSize: "12px",
+        }}
+      >
+        Open Training Lab
+      </button>
       <h1 style={{ fontSize: "28px", fontWeight: 500, margin: "0 0 8px" }}>
         Neural Network Digit Recognizer
       </h1>
